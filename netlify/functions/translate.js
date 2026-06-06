@@ -1,5 +1,4 @@
 exports.handler = async (event) => {
-  // Handle preflight CORS
   if (event.httpMethod === 'OPTIONS') {
     return {
       statusCode: 200,
@@ -20,43 +19,62 @@ exports.handler = async (event) => {
     const { text, sourceLang, targetLang } = JSON.parse(event.body);
 
     if (!text || !targetLang) {
-      return { statusCode: 400, body: JSON.stringify({ error: 'Missing text or targetLang' }) };
-    }
-
-    const fromStr = sourceLang === 'auto' ? 'the detected language' : sourceLang;
-
-    const prompt = `You are a professional translation assistant. Translate the following text from ${fromStr} to ${targetLang}.
-${sourceLang === 'auto' ? 'First detect what language this is, then translate it.' : ''}
-Provide ONLY the translated text — no explanations, no notes, no quotation marks around the output. If you detect the language (because auto-detect was selected), add a single line at the very end in the format: [Detected: LanguageName]
-
-Text to translate:
-${text}`;
-
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',,
-        max_tokens: 1000,
-        messages: [{ role: 'user', content: prompt }],
-      }),
-    });
-
-    if (!response.ok) {
-      const errData = await response.json().catch(() => ({}));
       return {
-        statusCode: response.status,
+        statusCode: 400,
         headers: { 'Access-Control-Allow-Origin': '*' },
-        body: JSON.stringify({ error: errData.error?.message || 'Anthropic API error' }),
+        body: JSON.stringify({ error: 'Missing text or targetLang' }),
       };
     }
 
-    const data = await response.json();
-    const result = data.content?.map((b) => b.text || '').join('').trim();
+    const langMap = {
+      'auto': 'autodetect',
+      'English': 'en', 'Spanish': 'es', 'French': 'fr', 'German': 'de',
+      'Italian': 'it', 'Portuguese': 'pt', 'Japanese': 'ja', 'Korean': 'ko',
+      'Chinese (Simplified)': 'zh-CN', 'Chinese (Traditional)': 'zh-TW',
+      'Arabic': 'ar', 'Hindi': 'hi', 'Russian': 'ru', 'Dutch': 'nl',
+      'Swedish': 'sv', 'Polish': 'pl', 'Turkish': 'tr', 'Greek': 'el',
+      'Hebrew': 'he', 'Thai': 'th', 'Vietnamese': 'vi', 'Indonesian': 'id',
+      'Tamil': 'ta', 'Bengali': 'bn', 'Urdu': 'ur', 'Malay': 'ms',
+      'Persian': 'fa', 'Ukrainian': 'uk', 'Romanian': 'ro', 'Czech': 'cs',
+      'Hungarian': 'hu', 'Finnish': 'fi', 'Danish': 'da', 'Norwegian': 'no',
+      'Catalan': 'ca', 'Croatian': 'hr', 'Slovak': 'sk', 'Swahili': 'sw',
+      'Tagalog': 'tl'
+    };
+
+    const srcCode = langMap[sourceLang] || 'autodetect';
+    const tgtCode = langMap[targetLang];
+
+    if (!tgtCode) {
+      return {
+        statusCode: 400,
+        headers: { 'Access-Control-Allow-Origin': '*' },
+        body: JSON.stringify({ error: 'Unsupported target language' }),
+      };
+    }
+
+    const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${srcCode}|${tgtCode}`;
+
+    const https = require('https');
+
+    const apiResult = await new Promise((resolve, reject) => {
+      https.get(url, (res) => {
+        let data = '';
+        res.on('data', (chunk) => { data += chunk; });
+        res.on('end', () => resolve(data));
+      }).on('error', reject);
+    });
+
+    const parsed = JSON.parse(apiResult);
+
+    if (parsed.responseStatus !== 200) {
+      return {
+        statusCode: 502,
+        headers: { 'Access-Control-Allow-Origin': '*' },
+        body: JSON.stringify({ error: parsed.responseMessage || 'Translation service error' }),
+      };
+    }
+
+    const result = parsed.responseData?.translatedText?.trim();
 
     return {
       statusCode: 200,
@@ -66,6 +84,7 @@ ${text}`;
       },
       body: JSON.stringify({ result }),
     };
+
   } catch (err) {
     return {
       statusCode: 500,
